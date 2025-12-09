@@ -2,3 +2,5 @@ Scrapy==2.13.4
 scrapy-playwright==0.0.44
 python-dotenv==1.2.1
 pymongo==4.15.5
+dateparser==1.2.2
+markdownify==1.2.2
