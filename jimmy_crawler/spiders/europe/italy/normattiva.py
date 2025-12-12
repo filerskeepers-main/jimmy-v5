@@ -30,7 +30,7 @@ class ItalyNormattivaHttpSpider(BaseJimmySpider):
 
     def start_requests(self):
         current_year = datetime.datetime.now().year
-        start_year = 2024
+        start_year = 1861
 
         for year in range(start_year, current_year + 1):
             year_str = str(year)
