@@ -30,7 +30,7 @@ class ItalyNormattivaHttpSpider(BaseJimmySpider):
 
     def start_requests(self):
         current_year = datetime.datetime.now().year
-        start_year = 1861
+        start_year = 2025
 
         for year in range(start_year, current_year + 1):
             year_str = str(year)
@@ -191,6 +191,7 @@ class ItalyNormattivaHttpSpider(BaseJimmySpider):
             response=response,
             title=response.meta['final_title'],
             jurisdiction="Italy",
+            legal_classification="legislation",
             source_identifier=src_id,
             date_of_publication=response.meta['final_pub_date'],
             date_of_effective=response.meta['final_eff_date'],

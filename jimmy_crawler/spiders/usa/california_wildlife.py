@@ -41,13 +41,10 @@ class CaliforniaWildlifeSpider(BaseJimmySpider):
         yield self.build_item(
             response=response,
             title=title,
-            date_of_publication=date_obj,  # Passing object, Pipeline handles string conversion
-
-            # Text Fields
+            date_of_publication=date_obj,
             content=clean_content,
             content_markdown=markdown_content,
-
-            # Metadata
             jurisdiction="California",
+            legal_classification="legislation",
             source_keywords=combined_keywords,
         )
