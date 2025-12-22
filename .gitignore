@@ -259,3 +259,5 @@ jimmy_crawler/spiders/.DS_Store
 /jimmy_crawler/spiders/test
 .DS_Store
 *.pem
+/dbs
+*.pid

@@ -16,11 +16,9 @@ RUN pip install --no-cache-dir -r requirements.txt scrapyd
 
 COPY . /app
 
-# Configure Scrapyd
 RUN mkdir -p /etc/scrapyd
 RUN echo "[scrapyd]\nbind_address = 0.0.0.0\nhttp_port = 6800" > /etc/scrapyd/scrapyd.conf
 
 EXPOSE 6800
 
-# Run Scrapyd
 CMD ["scrapyd"]
