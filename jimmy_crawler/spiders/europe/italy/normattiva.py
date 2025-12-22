@@ -13,6 +13,7 @@ class ItalyNormattivaHttpSpider(BaseJimmySpider):
     EXPORT_URL = "https://www.normattiva.it/esporta/attoCompleto"
 
     custom_settings = {
+        'LOG_LEVEL': 'INFO',  # Only show INFO, WARNING, and ERROR
         'DOWNLOAD_DELAY': 1.0,
         'CONCURRENT_REQUESTS': 16,
         'CONCURRENT_REQUESTS_PER_DOMAIN': 8,
@@ -29,21 +30,29 @@ class ItalyNormattivaHttpSpider(BaseJimmySpider):
     }
 
     def start_requests(self):
-        current_year = datetime.datetime.now().year
-        start_year = 2025
+        cur_yr = datetime.datetime.now().year
+        start_year = int(self.get_config("start_year", cur_yr))
+        end_year = int(self.get_config("end_year", cur_yr))
 
-        for year in range(start_year, current_year + 1):
+        # add safeguard to prevent next year or so
+        if end_year > cur_yr:
+            end_year = cur_yr
+
+        for year in range(start_year, end_year + 1):
             year_str = str(year)
             url = f"https://www.normattiva.it/ricerca/elencoPerData/anno/{year_str}"
             yield scrapy.Request(
                 url,
                 callback=self.parse_listing,
-                meta={'cookiejar': year, 'year': year_str},
+                meta={'cookiejar': year, 'year': year_str, 'depth': 1},
                 dont_filter=True
             )
 
     def parse_listing(self, response):
-        """Step 1: Listing -> Detail Page"""
+        # Reads from self.spider_config. Default is float('inf') (no limit)
+        max_depth = self.get_config("max_pagination_depth", float('inf'))
+        current_depth = response.meta.get('depth', 0)
+
         # --- Session Management ---
         current_qs = parse_qs(urlparse(response.url).query)
         tab_id = current_qs.get('tabID', [None])[0] or response.meta.get('tabID')
@@ -75,7 +84,12 @@ class ItalyNormattivaHttpSpider(BaseJimmySpider):
                 )
 
         # --- Pagination (Incremental) ---
+
         if len(detail_links) == 0: return
+
+        if current_depth >= max_depth:
+            self.logger.info(f"[YEAR {response.meta['year']}] Reached max pagination depth ({max_depth}). Stopping.")
+            return
 
         current_page_index = 0
         if "/anno/" not in response.url:
@@ -96,7 +110,8 @@ class ItalyNormattivaHttpSpider(BaseJimmySpider):
                 meta={
                     'cookiejar': response.meta['cookiejar'],
                     'year': response.meta['year'],
-                    'tabID': tab_id
+                    'tabID': tab_id,
+                    'depth': current_depth + 1
                 },
                 dont_filter=True,
                 headers={'Referer': response.url}
@@ -104,9 +119,9 @@ class ItalyNormattivaHttpSpider(BaseJimmySpider):
 
     def parse_summary_and_trigger_export(self, response):
         """
-        Step 2: Detail Page. Extract high-quality metadata.
+        Detail Page. Extract high-quality metadata.
         """
-        # --- 1. FULL TITLE  ---
+        # --- FULL TITLE  ---
         header_parts = response.css('#titoloAtto h2::text').getall()
         header_clean = self._clean_string(" ".join(header_parts))
 
@@ -120,7 +135,7 @@ class ItalyNormattivaHttpSpider(BaseJimmySpider):
         if not full_title.strip():
             full_title = response.meta.get('title_fallback', "Untitled Act")
 
-        # --- 2. EFFECTIVE DATE (Multiple Selectors) ---
+        # --- EFFECTIVE DATE (Multiple Selectors) ---
         # Priority 1: The green "NoteEvidenza" box
         eff_date_text = " ".join(response.css('.NoteEvidenza *::text').getall())
 
@@ -134,12 +149,12 @@ class ItalyNormattivaHttpSpider(BaseJimmySpider):
 
         effective_date_obj = self._parse_date_string(eff_date_text)
 
-        # --- 3. JOURNAL INFO / SOURCE ID ---
+        # --- JOURNAL INFO / SOURCE ID ---
         # Join all text in the link to avoid splitting "n." and "287"
         journal_text = " ".join(response.css('.link_gazzetta a::text').getall())
         journal_num, journal_date_obj = self._parse_journal_info(journal_text)
 
-        # --- 4. TRIGGER EXPORT ---
+        # --- TRIGGER EXPORT ---
         parsed = urlparse(response.url)
         qs = parse_qs(parsed.query)
         pub_date_param = qs.get('atto.dataPubblicazioneGazzetta', [None])[0]
