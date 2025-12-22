@@ -54,8 +54,7 @@ class JimmyCrawlerPipeline:
         )
 
     def close_spider(self, spider):
-        # 3. Mark Job as Finished
-        if self.db:
+        if self.db is not None:
             self.db[self.jobs_collection].update_one(
                 {'run_id': self.run_id},
                 {
