@@ -30,49 +30,9 @@ class ItalyNormattivaHttpSpider(BaseJimmySpider):
         'RETRY_HTTP_CODES': [500, 502, 503, 504, 408, 429],
     }
 
-    def start_requests(self):
-        """
-        FIXED: Now respects task payload from distributed system.
-        Falls back to legacy config for manual runs.
-        """
-        # NEW: Check if running via task-based system
-        if self.task_payload:
-            self.logger.info("=" * 80)
-            self.logger.info("📦 USING TASK PAYLOAD (Distributed Mode)")
-            self.logger.info("=" * 80)
-            self.logger.info(f"Task Payload: {json.dumps(self.task_payload, indent=2)}")
-
-            # Use BaseJimmySpider's task handling
-            yield from self.build_requests_from_task(self.task_payload)
-            return
-
-        # LEGACY: Manual/old runs (backward compatibility)
-        self.logger.warning("⚠️  NO TASK PAYLOAD - Using legacy config mode")
-        self.logger.warning("⚠️  This mode is deprecated. Use task-based runs instead.")
-
-        cur_yr = datetime.datetime.now().year
-        start_year = int(self.get_config("start_year", cur_yr))
-        end_year = int(self.get_config("end_year", cur_yr))
-
-        # Safeguard
-        if end_year > cur_yr:
-            end_year = cur_yr
-
-        self.logger.info(f"Legacy mode: cur_yr={cur_yr}, start_year={start_year}, end_year={end_year}")
-
-        for year in range(start_year, end_year + 1):
-            year_str = str(year)
-            url = f"https://www.normattiva.it/ricerca/elencoPerData/anno/{year_str}"
-            yield scrapy.Request(
-                url,
-                callback=self.parse_listing,
-                meta={'cookiejar': year, 'year': year_str, 'depth': 1},
-                dont_filter=True
-            )
-
     def get_year_url(self, year: int) -> str:
         """
-        NEW: Required by BaseJimmySpider for year_range partition.
+        Required by BaseJimmySpider for year_range partition.
         Builds URL for a specific year.
         """
         self.logger.info(f"📅 Building URL for year: {year}")
@@ -100,7 +60,7 @@ class ItalyNormattivaHttpSpider(BaseJimmySpider):
 
         # --- Links ---
         detail_links = response.xpath("//a[contains(@href, 'caricaDettaglioAtto')]")
-        self.logger.info(f"[YEAR {year}] Found {len(detail_links)} acts")
+        self.logger.info(f"[YEAR {year}] Found {len(detail_links)} acts on this page")
 
         for link_node in detail_links:
             # Fallback title from listing
@@ -126,7 +86,7 @@ class ItalyNormattivaHttpSpider(BaseJimmySpider):
         # --- Pagination (Incremental) ---
 
         if len(detail_links) == 0:
-            self.logger.info(f"[YEAR {year}] No acts found on this page")
+            self.logger.info(f"[YEAR {year}] No acts found on this page, stopping pagination")
             return
 
         if current_depth >= max_depth:
@@ -160,6 +120,8 @@ class ItalyNormattivaHttpSpider(BaseJimmySpider):
                 dont_filter=True,
                 headers={'Referer': response.url}
             )
+        else:
+            self.logger.info(f"[YEAR {year}] No more pagination links found")
 
     def parse_summary_and_trigger_export(self, response):
         """
@@ -229,6 +191,8 @@ class ItalyNormattivaHttpSpider(BaseJimmySpider):
                 },
                 headers={'Referer': response.url}
             )
+        else:
+            self.logger.warning(f"[YEAR {year}] Missing pub_date or code_red for: {response.url}")
 
     def parse_full_text(self, response):
         """Step 3: Combine Metadata + Content"""
@@ -251,7 +215,7 @@ class ItalyNormattivaHttpSpider(BaseJimmySpider):
         # Source ID Logic: "n. 287"
         src_id = response.meta.get('journal_number')
 
-        # NEW: Compute stable item_key
+        # Compute stable item_key
         doc_code = response.meta['doc_code']
         item_key = f"normattiva_{doc_code}"
 

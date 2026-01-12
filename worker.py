@@ -20,7 +20,7 @@ from dotenv import load_dotenv
 load_dotenv()
 
 # Configuration
-DASHBOARD_URL = os.getenv("DASHBOARD_URL", "http://dashboard_service:8000")
+DASHBOARD_URL = os.getenv("DASHBOARD_URL", "http://dashboard-service:8000")
 WORKER_ID = os.getenv("WORKER_ID", f"worker_{socket.gethostname()}_{os.getpid()}")
 POLL_INTERVAL = int(os.getenv("POLL_INTERVAL", "15"))  # seconds
 SCRAPY_PROJECT = os.getenv("SCRAPY_PROJECT", "jimmy_crawler")
@@ -192,10 +192,17 @@ class CrawlerWorker:
 
         logger.info(f"Executing task {task_id}: portal={portal_id}, run={run_id}")
 
-        # Create log directory
-        log_dir = f"/app/logs/{portal_id}/{run_id}"
-        os.makedirs(log_dir, exist_ok=True)
-        log_file = f"{log_dir}/{task_id}.log"
+        # Create log directory with fallback
+        try:
+            log_dir = f"/app/logs/{portal_id}/{run_id}"
+            os.makedirs(log_dir, exist_ok=True)
+            log_file = f"{log_dir}/{task_id}.log"
+        except PermissionError:
+            # Fallback to /tmp if /app/logs is not writable
+            log_dir = f"/tmp/jimmy_logs/{portal_id}/{run_id}"
+            os.makedirs(log_dir, exist_ok=True)
+            log_file = f"{log_dir}/{task_id}.log"
+            logger.warning(f"Using fallback log directory: {log_dir}")
 
         logger.info(f"Logs will be written to: {log_file}")
 
@@ -217,7 +224,8 @@ class CrawlerWorker:
                 "--loglevel", "INFO"
             ]
 
-            logger.info(f"Running: {' '.join(cmd[:5])}... (full command in logs)")
+            logger.info(f"Running: {' '.join(cmd[:3])}...")
+            logger.info(f"Task payload: {payload}")
 
             # Execute WITHOUT capture_output so logs go to stdout AND file
             # Use Popen for async execution
@@ -242,9 +250,11 @@ class CrawlerWorker:
 
             # Log output
             if stdout:
-                logger.info(f"STDOUT:\n{stdout.decode('utf-8', errors='ignore')[-1000:]}")
+                stdout_text = stdout.decode('utf-8', errors='ignore')
+                logger.info(f"STDOUT (last 1000 chars):\n{stdout_text[-1000:]}")
             if stderr:
-                logger.error(f"STDERR:\n{stderr.decode('utf-8', errors='ignore')[-1000:]}")
+                stderr_text = stderr.decode('utf-8', errors='ignore')
+                logger.error(f"STDERR (last 1000 chars):\n{stderr_text[-1000:]}")
 
             if process.returncode == 0:
                 logger.info(f"Task {task_id} completed successfully")

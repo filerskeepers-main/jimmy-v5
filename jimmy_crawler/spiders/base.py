@@ -34,7 +34,7 @@ class BaseJimmySpider(scrapy.Spider):
             self.task_payload = {}
 
         # Dashboard URL for discovery mode
-        self.dashboard_url = kwargs.get('dashboard_url', 'http://dashboard_service:8000')
+        self.dashboard_url = kwargs.get('dashboard_url', 'http://dashboard-service:8000')
 
         # Legacy: spider_config (custom args per spider)
         config_json = kwargs.get('config_json', '{}')
@@ -67,6 +67,9 @@ class BaseJimmySpider(scrapy.Spider):
 
         elif partition_type == 'date_range':
             yield from self._build_date_range_requests(payload)
+
+        elif partition_type == 'year_range':
+            yield from self._build_year_range_requests(payload)
 
         elif partition_type == 'section':
             yield from self._build_section_requests(payload)
@@ -115,6 +118,28 @@ class BaseJimmySpider(scrapy.Spider):
         # Example: single request with date range
         url = self.get_date_range_url(from_date, to_date)
         yield scrapy.Request(url, callback=self.parse)
+
+    def _build_year_range_requests(self, payload: Dict[str, Any]):
+        """
+        Build requests for year range partition.
+        """
+        start_year = payload.get('start_year')
+        end_year = payload.get('end_year')
+
+        if not start_year or not end_year:
+            self.logger.error(f"Missing year range in payload: {payload}")
+            return
+
+        self.logger.info(f"Building requests for years {start_year} to {end_year}")
+
+        for year in range(start_year, end_year + 1):
+            url = self.get_year_url(year)
+            yield scrapy.Request(
+                url,
+                callback=self.parse_listing if hasattr(self, 'parse_listing') else self.parse,
+                meta={'year': year, 'cookiejar': year, 'depth': 1},
+                dont_filter=True
+            )
 
     def _build_section_requests(self, payload: Dict[str, Any]):
         """
@@ -234,6 +259,13 @@ class BaseJimmySpider(scrapy.Spider):
         Override in subclass.
         """
         raise NotImplementedError("Subclass must implement get_date_range_url()")
+
+    def get_year_url(self, year: int) -> str:
+        """
+        Build URL for a specific year.
+        Override in subclass.
+        """
+        raise NotImplementedError("Subclass must implement get_year_url()")
 
     def get_id_url(self, doc_id: int) -> str:
         """
