@@ -1,7 +1,6 @@
 import scrapy
 import datetime
 import re
-import json
 from typing import Optional, Tuple
 from urllib.parse import urlparse, parse_qs, urlencode
 from jimmy_crawler.spiders.base import BaseJimmySpider
@@ -14,7 +13,7 @@ class ItalyNormattivaHttpSpider(BaseJimmySpider):
     EXPORT_URL = "https://www.normattiva.it/esporta/attoCompleto"
 
     custom_settings = {
-        'LOG_LEVEL': 'INFO',
+        # 'LOG_LEVEL': 'INFO',  # Only show INFO, WARNING, and ERROR
         'DOWNLOAD_DELAY': 1.0,
         'CONCURRENT_REQUESTS': 16,
         'CONCURRENT_REQUESTS_PER_DOMAIN': 8,
@@ -31,34 +30,16 @@ class ItalyNormattivaHttpSpider(BaseJimmySpider):
     }
 
     def start_requests(self):
-        """
-        FIXED: Now respects task payload from distributed system.
-        Falls back to legacy config for manual runs.
-        """
-        # NEW: Check if running via task-based system
-        if self.task_payload:
-            self.logger.info("=" * 80)
-            self.logger.info("📦 USING TASK PAYLOAD (Distributed Mode)")
-            self.logger.info("=" * 80)
-            self.logger.info(f"Task Payload: {json.dumps(self.task_payload, indent=2)}")
-
-            # Use BaseJimmySpider's task handling
-            yield from self.build_requests_from_task(self.task_payload)
-            return
-
-        # LEGACY: Manual/old runs (backward compatibility)
-        self.logger.warning("⚠️  NO TASK PAYLOAD - Using legacy config mode")
-        self.logger.warning("⚠️  This mode is deprecated. Use task-based runs instead.")
-
         cur_yr = datetime.datetime.now().year
         start_year = int(self.get_config("start_year", cur_yr))
         end_year = int(self.get_config("end_year", cur_yr))
 
-        # Safeguard
+        # add safeguard to prevent next year or so
         if end_year > cur_yr:
             end_year = cur_yr
 
-        self.logger.info(f"Legacy mode: cur_yr={cur_yr}, start_year={start_year}, end_year={end_year}")
+        print("cur_yr:", cur_yr, "start_year:", start_year, "end_year:", end_year)
+        self.logger.info("cur_yr=%s start_year=%s end_year=%s", cur_yr, start_year, end_year)
 
         for year in range(start_year, end_year + 1):
             year_str = str(year)
@@ -70,24 +51,7 @@ class ItalyNormattivaHttpSpider(BaseJimmySpider):
                 dont_filter=True
             )
 
-    def get_year_url(self, year: int) -> str:
-        """
-        NEW: Required by BaseJimmySpider for year_range partition.
-        Builds URL for a specific year.
-        """
-        self.logger.info(f"📅 Building URL for year: {year}")
-        url = f"https://www.normattiva.it/ricerca/elencoPerData/anno/{year}"
-        self.logger.info(f"🔗 URL: {url}")
-        return url
-
     def parse_listing(self, response):
-        """
-        Parse listing page (unchanged from original).
-        """
-        # Log what year we're processing
-        year = response.meta.get('year', 'unknown')
-        self.logger.info(f"[YEAR {year}] Processing listing page: {response.url}")
-
         # Reads from self.spider_config. Default is float('inf') (no limit)
         max_depth = self.get_config("max_pagination_depth", float('inf'))
         current_depth = response.meta.get('depth', 0)
@@ -100,7 +64,7 @@ class ItalyNormattivaHttpSpider(BaseJimmySpider):
 
         # --- Links ---
         detail_links = response.xpath("//a[contains(@href, 'caricaDettaglioAtto')]")
-        self.logger.info(f"[YEAR {year}] Found {len(detail_links)} acts")
+        self.logger.info(f"[YEAR {response.meta['year']}] Found {len(detail_links)} acts")
 
         for link_node in detail_links:
             # Fallback title from listing
@@ -117,20 +81,17 @@ class ItalyNormattivaHttpSpider(BaseJimmySpider):
                     meta={
                         'title_fallback': title_fallback,
                         'cookiejar': response.meta['cookiejar'],
-                        'tabID': tab_id,
-                        'year': year  # Pass year through
+                        'tabID': tab_id
                     },
                     headers={'Referer': response.url}
                 )
 
         # --- Pagination (Incremental) ---
 
-        if len(detail_links) == 0:
-            self.logger.info(f"[YEAR {year}] No acts found on this page")
-            return
+        if len(detail_links) == 0: return
 
         if current_depth >= max_depth:
-            self.logger.info(f"[YEAR {year}] Reached max pagination depth ({max_depth}). Stopping.")
+            self.logger.info(f"[YEAR {response.meta['year']}] Reached max pagination depth ({max_depth}). Stopping.")
             return
 
         current_page_index = 0
@@ -146,14 +107,12 @@ class ItalyNormattivaHttpSpider(BaseJimmySpider):
             params = {'title': 'Dettaglio', 'bloccoAggiornamentoBreadCrumb': 'true'}
             if tab_id: params['tabID'] = tab_id
 
-            self.logger.info(f"[YEAR {year}] Following pagination to page {next_page_index}")
-
             yield scrapy.Request(
                 f"{base_next_url}?{urlencode(params)}",
                 callback=self.parse_listing,
                 meta={
                     'cookiejar': response.meta['cookiejar'],
-                    'year': year,
+                    'year': response.meta['year'],
                     'tabID': tab_id,
                     'depth': current_depth + 1
                 },
@@ -165,8 +124,6 @@ class ItalyNormattivaHttpSpider(BaseJimmySpider):
         """
         Detail Page. Extract high-quality metadata.
         """
-        year = response.meta.get('year', 'unknown')
-
         # --- FULL TITLE  ---
         header_parts = response.css('#titoloAtto h2::text').getall()
         header_clean = self._clean_string(" ".join(header_parts))
@@ -224,16 +181,13 @@ class ItalyNormattivaHttpSpider(BaseJimmySpider):
                     'final_eff_date': effective_date_obj,
                     'journal_number': journal_num,
                     'doc_code': code_red_param,
-                    'cookiejar': response.meta['cookiejar'],
-                    'year': year
+                    'cookiejar': response.meta['cookiejar']
                 },
                 headers={'Referer': response.url}
             )
 
     def parse_full_text(self, response):
         """Step 3: Combine Metadata + Content"""
-        year = response.meta.get('year', 'unknown')
-
         # Content
         raw_html = response.css('body').get()
         content_lines = response.css('body ::text').getall()
@@ -250,12 +204,6 @@ class ItalyNormattivaHttpSpider(BaseJimmySpider):
 
         # Source ID Logic: "n. 287"
         src_id = response.meta.get('journal_number')
-
-        # NEW: Compute stable item_key
-        doc_code = response.meta['doc_code']
-        item_key = f"normattiva_{doc_code}"
-
-        self.logger.info(f"[YEAR {year}] 📦 Scraped: {response.meta['final_title'][:50]}... (item_key: {item_key})")
 
         yield self.build_item(
             response=response,
